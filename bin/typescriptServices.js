@@ -1652,6 +1652,7 @@ var ts;
         ModuleKind[ModuleKind["None"] = 0] = "None";
         ModuleKind[ModuleKind["CommonJS"] = 1] = "CommonJS";
         ModuleKind[ModuleKind["AMD"] = 2] = "AMD";
+        ModuleKind[ModuleKind["CMD"] = 3] = "CMD";
     })(ts.ModuleKind || (ts.ModuleKind = {}));
     var ModuleKind = ts.ModuleKind;
     (function (ScriptTarget) {
@@ -6805,7 +6806,8 @@ var ts;
                 write(" {");
                 scopeEmitStart(node);
                 increaseIndent();
-                emitDetachedComments(node.body.kind === 168 /* FunctionBlock */ ? node.body.statements : node.body);
+                var o = node.body;
+                emitDetachedComments(node.body.kind === 168 /* FunctionBlock */ ? (o).statements : node.body);
                 var startIndex = 0;
                 if (node.body.kind === 168 /* FunctionBlock */) {
                     startIndex = emitDirectivePrologues(node.body.statements, true);
@@ -7328,6 +7330,29 @@ var ts;
                 writeLine();
                 write("});");
             }
+            function emitCMDModule(node, startIndex) {
+                var imports = getExternalImportDeclarations(node);
+                writeLine();
+                write("define(function(require, exports, module) {");
+                increaseIndent();
+                emitCaptureThisForNodeIfNecessary(node);
+                emitLinesStartingAt(node.statements, startIndex);
+                var exportName = resolver.getExportAssignmentName(node);
+                if (exportName) {
+                    writeLine();
+                    var exportAssignement = getFirstExportAssignment(node);
+                    emitStart(exportAssignement);
+                    write("return ");
+                    emitStart(exportAssignement.exportName);
+                    write(exportName);
+                    emitEnd(exportAssignement.exportName);
+                    write(";");
+                    emitEnd(exportAssignement);
+                }
+                decreaseIndent();
+                writeLine();
+                write("});");
+            }
             function emitCommonJSModule(node, startIndex) {
                 emitCaptureThisForNodeIfNecessary(node);
                 emitLinesStartingAt(node.statements, startIndex);
@@ -7383,6 +7408,9 @@ var ts;
                 if (ts.isExternalModule(node)) {
                     if (compilerOptions.module === 2 /* AMD */) {
                         emitAMDModule(node, startIndex);
+                    }
+                    else if (compilerOptions.module === 3 /* CMD */) {
+                        emitCMDModule(node, startIndex);
                     }
                     else {
                         emitCommonJSModule(node, startIndex);

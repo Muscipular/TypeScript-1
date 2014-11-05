@@ -975,6 +975,7 @@ module ts {
         None,
         CommonJS,
         AMD,
+        CMD,
     }
 
     export enum ScriptTarget {

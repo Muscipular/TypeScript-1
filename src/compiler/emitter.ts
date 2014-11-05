@@ -1402,8 +1402,8 @@ module ts {
                 write(" {");
                 scopeEmitStart(node);
                 increaseIndent();
-
-                emitDetachedComments(node.body.kind === SyntaxKind.FunctionBlock ? (<Block>node.body).statements : node.body);
+                var o : any = node.body;
+                emitDetachedComments(node.body.kind === SyntaxKind.FunctionBlock ? (o).statements : node.body);
 
                 var startIndex = 0;
                 if (node.body.kind === SyntaxKind.FunctionBlock) {
@@ -1950,6 +1950,30 @@ module ts {
                 write("});");
             }
 
+            function emitCMDModule(node: SourceFile, startIndex: number) {
+                var imports = getExternalImportDeclarations(node);
+                writeLine();
+                write("define(function(require, exports, module) {");
+                increaseIndent();
+                emitCaptureThisForNodeIfNecessary(node);
+                emitLinesStartingAt(node.statements, startIndex);
+                var exportName = resolver.getExportAssignmentName(node);
+                if (exportName) {
+                    writeLine();
+                    var exportAssignement = getFirstExportAssignment(node);
+                    emitStart(exportAssignement);
+                    write("return ");
+                    emitStart(exportAssignement.exportName);
+                    write(exportName);
+                    emitEnd(exportAssignement.exportName);
+                    write(";");
+                    emitEnd(exportAssignement);
+                }
+                decreaseIndent();
+                writeLine();
+                write("});");
+            }
+
             function emitCommonJSModule(node: SourceFile, startIndex: number) {
                 emitCaptureThisForNodeIfNecessary(node);
                 emitLinesStartingAt(node.statements, startIndex);
@@ -2010,6 +2034,9 @@ module ts {
                 if (isExternalModule(node)) {
                     if (compilerOptions.module === ModuleKind.AMD) {
                         emitAMDModule(node, startIndex);
+                    }
+                    else if (compilerOptions.module === ModuleKind.CMD) {
+                        emitCMDModule(node, startIndex);
                     }
                     else {
                         emitCommonJSModule(node, startIndex);
