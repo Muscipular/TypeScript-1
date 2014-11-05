@@ -4354,7 +4354,11 @@ module ts {
                     }
                     // Only use narrowed type if construct contains no assignments to variable
                     if (narrowedType !== type) {
-                        if (isVariableAssignedWithin(symbol, node)) {
+                        if (isVariableAssignedWithin(symbol, node.kind === SyntaxKind.IfStatement 
+                            ? (child === (<IfStatement>node).thenStatement) // If this is then statement of the if 
+                            ? (<IfStatement>node).thenStatement  // use then branch
+                            : (<IfStatement>node).elseStatement // use else branch
+                            : node)) { // use node
                             break;
                         }
                         type = narrowedType;

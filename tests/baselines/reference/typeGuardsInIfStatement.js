@@ -92,6 +92,16 @@ function foo8(x: number | string | boolean) {
         }
     }
 }
+function foo9(x: number | string) {
+    var y = 10;
+    if (typeof x === "string") {
+        y = x.length; // usage of x or assignment to separate variable shouldn't cause narrowing of type to stop
+        return x === "hello"; // string
+    }
+    else {
+        return x == 10; // number
+    }
+}
 
 //// [typeGuardsInIfStatement.js]
 // Type guards are particular expression patterns involving the �typeof� and �instanceof� operators 
@@ -184,5 +194,15 @@ function foo8(x) {
         else {
             return x == 10; // number
         }
+    }
+}
+function foo9(x) {
+    var y = 10;
+    if (typeof x === "string") {
+        y = x.length; // usage of x or assignment to separate variable shouldn't cause narrowing of type to stop
+        return x === "hello"; // string
+    }
+    else {
+        return x == 10; // number
     }
 }
