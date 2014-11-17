@@ -1052,6 +1052,7 @@ module ts {
         None,
         CommonJS,
         AMD,
+        CMD,
     }
 
     export interface LineAndCharacter {
