@@ -1,7 +1,9 @@
 /// <reference path="core.ts"/>
-/// <reference path="scanner.ts"/>
 
 module ts {
+    export interface Map<T> {
+        [index: string]: T;
+    }
 
     export interface TextRange {
         pos: number;
@@ -16,6 +18,7 @@ module ts {
         MultiLineCommentTrivia,
         NewLineTrivia,
         WhitespaceTrivia,
+        ConflictMarkerTrivia,
         // Literals
         NumericLiteral,
         StringLiteral,
@@ -138,16 +141,20 @@ module ts {
         SetKeyword,
         StringKeyword,
         TypeKeyword,
+
         // Parse tree nodes
-        Missing,
+
         // Names
         QualifiedName,
+        ComputedPropertyName,
         // Signature elements
         TypeParameter,
         Parameter,
         // TypeMember
-        Property,
-        Method,
+        PropertySignature,
+        PropertyDeclaration,
+        MethodSignature,
+        MethodDeclaration,
         Constructor,
         GetAccessor,
         SetAccessor,
@@ -156,32 +163,42 @@ module ts {
         IndexSignature,
         // Type
         TypeReference,
+        FunctionType,
+        ConstructorType,
         TypeQuery,
         TypeLiteral,
         ArrayType,
         TupleType,
         UnionType,
-        ParenType,
+        ParenthesizedType,
+        // Binding patterns
+        ObjectBindingPattern,
+        ArrayBindingPattern,
+        BindingElement,
         // Expression
-        ArrayLiteral,
-        ObjectLiteral,
-        PropertyAssignment,
-        PropertyAccess,
-        IndexedAccess,
+        ArrayLiteralExpression,
+        ObjectLiteralExpression,
+        PropertyAccessExpression,
+        ElementAccessExpression,
         CallExpression,
         NewExpression,
         TaggedTemplateExpression,
-        TypeAssertion,
-        ParenExpression,
+        TypeAssertionExpression,
+        ParenthesizedExpression,
         FunctionExpression,
         ArrowFunction,
-        PrefixOperator,
-        PostfixOperator,
+        DeleteExpression,
+        TypeOfExpression,
+        VoidExpression,
+        PrefixUnaryExpression,
+        PostfixUnaryExpression,
         BinaryExpression,
         ConditionalExpression,
         TemplateExpression,
-        TemplateSpan,
+        YieldExpression,
         OmittedExpression,
+        // Misc
+        TemplateSpan,
         // Element
         Block,
         VariableStatement,
@@ -197,18 +214,14 @@ module ts {
         ReturnStatement,
         WithStatement,
         SwitchStatement,
-        CaseClause,
-        DefaultClause,
         LabeledStatement,
         ThrowStatement,
         TryStatement,
         TryBlock,
-        CatchBlock,
         FinallyBlock,
         DebuggerStatement,
         VariableDeclaration,
         FunctionDeclaration,
-        FunctionBlock,
         ClassDeclaration,
         InterfaceDeclaration,
         TypeAliasDeclaration,
@@ -217,11 +230,26 @@ module ts {
         ModuleBlock,
         ImportDeclaration,
         ExportAssignment,
+
+        // Module references
+        ExternalModuleReference,
+
+        // Clauses
+        CaseClause,
+        DefaultClause,
+        HeritageClause,
+        CatchClause,
+
+        // Property assignments
+        PropertyAssignment,
+        ShorthandPropertyAssignment,
+
         // Enum
         EnumMember,
         // Top-level nodes
         SourceFile,
         Program,
+
         // Synthesized list
         SyntaxList,
         // Enum value count
@@ -236,55 +264,93 @@ module ts {
         FirstFutureReservedWord = ImplementsKeyword,
         LastFutureReservedWord = YieldKeyword,
         FirstTypeNode = TypeReference,
-        LastTypeNode = ParenType,
+        LastTypeNode = ParenthesizedType,
         FirstPunctuation = OpenBraceToken,
         LastPunctuation = CaretEqualsToken,
-        FirstToken = EndOfFileToken,
+        FirstToken = Unknown,
         LastToken = TypeKeyword,
         FirstTriviaToken = SingleLineCommentTrivia,
-        LastTriviaToken = WhitespaceTrivia,
+        LastTriviaToken = ConflictMarkerTrivia,
         FirstLiteralToken = NumericLiteral,
         LastLiteralToken = NoSubstitutionTemplateLiteral,
         FirstTemplateToken = NoSubstitutionTemplateLiteral,
-        LastTemplateToken = TemplateTail
+        LastTemplateToken = TemplateTail,
+        FirstOperator = SemicolonToken,
+        LastOperator = CaretEqualsToken,
+        FirstBinaryOperator = LessThanToken,
+        LastBinaryOperator = CaretEqualsToken,
+        FirstNode = QualifiedName,
     }
 
     export const enum NodeFlags {
-        Export           = 0x00000001,  // Declarations
-        Ambient          = 0x00000002,  // Declarations
-        QuestionMark     = 0x00000004,  // Parameter/Property/Method
-        Rest             = 0x00000008,  // Parameter
-        Public           = 0x00000010,  // Property/Method
-        Private          = 0x00000020,  // Property/Method
-        Protected        = 0x00000040,  // Property/Method
-        Static           = 0x00000080,  // Property/Method
-        MultiLine        = 0x00000100,  // Multi-line array or object literal
-        Synthetic        = 0x00000200,  // Synthetic node (for full fidelity)
-        DeclarationFile  = 0x00000400,  // Node is a .d.ts file
-        Let              = 0x00000800,  // Variable declaration
-        Const            = 0x00001000,  // Variable declaration
+        Export              = 0x00000001,  // Declarations
+        Ambient             = 0x00000002,  // Declarations
+        Public              = 0x00000010,  // Property/Method
+        Private             = 0x00000020,  // Property/Method
+        Protected           = 0x00000040,  // Property/Method
+        Static              = 0x00000080,  // Property/Method
+        MultiLine           = 0x00000100,  // Multi-line array or object literal
+        Synthetic           = 0x00000200,  // Synthetic node (for full fidelity)
+        DeclarationFile     = 0x00000400,  // Node is a .d.ts file
+        Let                 = 0x00000800,  // Variable declaration
+        Const               = 0x00001000,  // Variable declaration
+        OctalLiteral        = 0x00002000,
 
         Modifier = Export | Ambient | Public | Private | Protected | Static,
         AccessibilityModifier = Public | Private | Protected,
         BlockScoped = Let | Const
     }
 
+    export const enum ParserContextFlags {
+        // Set if this node was parsed in strict mode.  Used for grammar error checks, as well as
+        // checking if the node can be reused in incremental settings.
+        StrictMode = 1 << 0,
+
+        // If this node was parsed in a context where 'in-expressions' are not allowed.
+        DisallowIn = 1 << 1,
+
+        // If this node was parsed in the 'yield' context created when parsing a generator.
+        Yield = 1 << 2,
+
+        // If this node was parsed in the parameters of a generator.
+        GeneratorParameter = 1 << 3,
+
+        // If the parser encountered an error when parsing the code that created this node.  Note
+        // the parser only sets this directly on the node it creates right after encountering the
+        // error.  We then propagate that flag upwards to parent nodes during incremental parsing.
+        ContainsError = 1 << 4,
+
+        // Used during incremental parsing to determine if we need to visit this node to see if
+        // any of its children had an error.  Once we compute that once, we can set this bit on the
+        // node to know that we never have to do it again.  From that point on, we can just check
+        // the node directly for 'ContainsError'.
+        HasPropagatedChildContainsErrorFlag = 1 << 5
+    }
+
     export interface Node extends TextRange {
         kind: SyntaxKind;
         flags: NodeFlags;
+        // Specific context the parser was in when this node was created.  Normally undefined. 
+        // Only set when the parser was in some interesting context (like async/yield).
+        parserContextFlags?: ParserContextFlags;
         id?: number;                  // Unique id (used to look up NodeLinks)
         parent?: Node;                // Parent node (initialized by binding)
         symbol?: Symbol;              // Symbol declared by node (initialized by binding)
         locals?: SymbolTable;         // Locals associated with node (initialized by binding)
         nextContainer?: Node;         // Next container in declaration order (initialized by binding)
         localSymbol?: Symbol;         // Local symbol declared by node (initialized by binding only for exported nodes)
+        modifiers?: ModifiersArray;           // Array of modifiers
     }
 
     export interface NodeArray<T> extends Array<T>, TextRange {
         hasTrailingComma?: boolean;
     }
 
-    export interface Identifier extends Node {
+    export interface ModifiersArray extends NodeArray<Node> {
+        flags: number;
+    }
+
+    export interface Identifier extends PrimaryExpression {
         text: string;                 // Text of identifier (with escapes converted to characters)
     }
 
@@ -296,42 +362,157 @@ module ts {
 
     export type EntityName = Identifier | QualifiedName;
 
-    export interface ParsedSignature {
+    export type DeclarationName = Identifier | LiteralExpression | ComputedPropertyName | BindingPattern;
+
+    export interface Declaration extends Node {
+        _declarationBrand: any;
+        name?: DeclarationName;
+    }
+
+    export interface ComputedPropertyName extends Node {
+        expression: Expression;
+    }
+
+    export interface TypeParameterDeclaration extends Declaration {
+        name: Identifier;
+        constraint?: TypeNode;
+
+        // For error recovery purposes.
+        expression?: Expression;
+    }
+
+    export interface SignatureDeclaration extends Declaration {
         typeParameters?: NodeArray<TypeParameterDeclaration>;
         parameters: NodeArray<ParameterDeclaration>;
         type?: TypeNode;
     }
 
-    export interface Declaration extends Node {
-        name?: Identifier;
-    }
-
-    export interface TypeParameterDeclaration extends Declaration {
-        constraint?: TypeNode;
-    }
-
-    export interface SignatureDeclaration extends Declaration, ParsedSignature { }
-
+    // SyntaxKind.VariableDeclaration
     export interface VariableDeclaration extends Declaration {
+        name: Identifier | BindingPattern;  // Declared variable name
+        type?: TypeNode;                    // Optional type annotation
+        initializer?: Expression;           // Optional initializer
+    }
+
+    // SyntaxKind.Parameter
+    export interface ParameterDeclaration extends Declaration {
+        dotDotDotToken?: Node;              // Present on rest parameter
+        name: Identifier | BindingPattern;  // Declared parameter name
+        questionToken?: Node;               // Present on optional parameter
+        type?: TypeNode;                    // Optional type annotation
+        initializer?: Expression;           // Optional initializer
+    }
+
+    // SyntaxKind.BindingElement
+    export interface BindingElement extends Declaration {
+        propertyName?: Identifier;          // Binding property name (in object binding pattern)
+        dotDotDotToken?: Node;              // Present on rest binding element
+        name: Identifier | BindingPattern;  // Declared binding element name
+        initializer?: Expression;           // Optional initializer
+    }
+
+    // SyntaxKind.Property
+    export interface PropertyDeclaration extends Declaration, ClassElement {
+        name: DeclarationName;              // Declared property name
+        questionToken?: Node;               // Present on optional property
+        type?: TypeNode;                    // Optional type annotation
+        initializer?: Expression;           // Optional initializer
+    }
+
+    export interface ObjectLiteralElement extends Declaration {
+        _objectLiteralBrandBrand: any;
+    }
+
+    // SyntaxKind.PropertyAssignment
+    export interface PropertyAssignment extends ObjectLiteralElement {
+        _propertyAssignmentBrand: any;
+        name: DeclarationName;
+        questionToken?: Node;
+        initializer: Expression;
+    }
+
+    // SyntaxKind.ShorthandPropertyAssignment
+    export interface ShorthandPropertyAssignment extends ObjectLiteralElement {
+        name: Identifier;
+        questionToken?: Node;
+    }
+
+    // SyntaxKind.VariableDeclaration
+    // SyntaxKind.Parameter
+    // SyntaxKind.BindingElement
+    // SyntaxKind.Property
+    // SyntaxKind.PropertyAssignment
+    // SyntaxKind.ShorthandPropertyAssignment
+    // SyntaxKind.EnumMember
+    export interface VariableLikeDeclaration extends Declaration {
+        propertyName?: Identifier;
+        dotDotDotToken?: Node;
+        name: DeclarationName;
+        questionToken?: Node;
         type?: TypeNode;
         initializer?: Expression;
     }
 
-    export interface PropertyDeclaration extends VariableDeclaration { }
+    export interface BindingPattern extends Node {
+        elements: NodeArray<BindingElement>;
+    }
 
-    export interface ParameterDeclaration extends VariableDeclaration { }
+    /**
+     * Several node kinds share function-like features such as a signature,
+     * a name, and a body. These nodes should extend FunctionLikeDeclaration.
+     * Examples:
+     *  FunctionDeclaration
+     *  MethodDeclaration
+     *  AccessorDeclaration
+     */
+    export interface FunctionLikeDeclaration extends SignatureDeclaration {
+        _functionLikeDeclarationBrand: any;
 
-    export interface FunctionDeclaration extends Declaration, ParsedSignature {
+        asteriskToken?: Node;
+        questionToken?: Node;
         body?: Block | Expression;
     }
 
-    export interface MethodDeclaration extends FunctionDeclaration { }
+    export interface FunctionDeclaration extends FunctionLikeDeclaration, Statement {
+        name: Identifier;
+        body?: Block;
+    }
 
-    export interface ConstructorDeclaration extends FunctionDeclaration { }
+    // Note that a MethodDeclaration is considered both a ClassElement and an ObjectLiteralElement.
+    // Both the grammars for ClassDeclaration and ObjectLiteralExpression allow for MethodDeclarations
+    // as child elements, and so a MethodDeclaration satisfies both interfaces.  This avoids the
+    // alternative where we would need separate kinds/types for ClassMethodDeclaration and
+    // ObjectLiteralMethodDeclaration, which would look identical.
+    //
+    // Because of this, it may be necessary to determine what sort of MethodDeclaration you have
+    // at later stages of the compiler pipeline.  In that case, you can either check the parent kind
+    // of the method, or use helpers like isObjectLiteralMethodDeclaration
+    export interface MethodDeclaration extends FunctionLikeDeclaration, ClassElement, ObjectLiteralElement {
+        body?: Block;
+    }
 
-    export interface AccessorDeclaration extends FunctionDeclaration { }
+    export interface ConstructorDeclaration extends FunctionLikeDeclaration, ClassElement {
+        body?: Block;
+    }
 
-    export interface TypeNode extends Node { }
+    // See the comment on MethodDeclaration for the intuition behind AccessorDeclaration being a 
+    // ClassElement and an ObjectLiteralElement.
+    export interface AccessorDeclaration extends FunctionLikeDeclaration, ClassElement, ObjectLiteralElement {
+        _accessorDeclarationBrand: any;
+        body: Block;
+    }
+
+    export interface IndexSignatureDeclaration extends SignatureDeclaration, ClassElement {
+        _indexSignatureDeclarationBrand: any;
+    }
+
+    export interface TypeNode extends Node {
+        _typeNodeBrand: any;
+    }
+
+    export interface FunctionOrConstructorTypeNode extends TypeNode, SignatureDeclaration {
+        _functionOrConstructorTypeNodeBrand: any;
+    }
 
     export interface TypeReferenceNode extends TypeNode {
         typeName: EntityName;
@@ -342,7 +523,8 @@ module ts {
         exprName: EntityName;
     }
 
-    export interface TypeLiteralNode extends TypeNode {
+    // A TypeLiteral is the declaration node for an anonymous symbol.
+    export interface TypeLiteralNode extends TypeNode, Declaration {
         members: NodeArray<Node>;
     }
 
@@ -358,21 +540,69 @@ module ts {
         types: NodeArray<TypeNode>;
     }
 
-    export interface ParenTypeNode extends TypeNode {
+    export interface ParenthesizedTypeNode extends TypeNode {
         type: TypeNode;
     }
 
-    export interface StringLiteralTypeNode extends TypeNode {
-        text: string;
-    }
+    export interface StringLiteralTypeNode extends LiteralExpression, TypeNode { }
+
+    // Note: 'brands' in our syntax nodes serve to give us a small amount of nominal typing.  
+    // Consider 'Expression'.  Without the brand, 'Expression' is actually no different
+    // (structurally) than 'Node'.  Because of this you can pass any Node to a function that
+    // takes an Expression without any error.  By using the 'brands' we ensure that the type
+    // checker actually thinks you have something of the right type.  Note: the brands are 
+    // never actually given values.  At runtime they have zero cost. 
 
     export interface Expression extends Node {
+        _expressionBrand: any;
         contextualType?: Type;  // Used to temporarily assign a contextual type during overload resolution
     }
 
     export interface UnaryExpression extends Expression {
+        _unaryExpressionBrand: any;
+    }
+
+    export interface PrefixUnaryExpression extends UnaryExpression {
         operator: SyntaxKind;
-        operand: Expression;
+        operand: UnaryExpression;
+    }
+
+    export interface PostfixUnaryExpression extends PostfixExpression {
+        operand: LeftHandSideExpression;
+        operator: SyntaxKind;
+    }
+
+    export interface PostfixExpression extends UnaryExpression {
+        _postfixExpressionBrand: any;
+    }
+
+    export interface LeftHandSideExpression extends PostfixExpression {
+        _leftHandSideExpressionBrand: any;
+    }
+
+    export interface MemberExpression extends LeftHandSideExpression {
+        _memberExpressionBrand: any;
+    }
+
+    export interface PrimaryExpression extends MemberExpression {
+        _primaryExpressionBrand: any;
+    }
+
+    export interface DeleteExpression extends UnaryExpression {
+        expression: UnaryExpression;
+    }
+
+    export interface TypeOfExpression extends UnaryExpression {
+        expression: UnaryExpression;
+    }
+
+    export interface VoidExpression extends UnaryExpression {
+        expression: UnaryExpression;
+    }
+    
+    export interface YieldExpression extends Expression {
+        asteriskToken?: Node;
+        expression: Expression;
     }
 
     export interface BinaryExpression extends Expression {
@@ -387,18 +617,24 @@ module ts {
         whenFalse: Expression;
     }
 
-    export interface FunctionExpression extends Expression, FunctionDeclaration {
+    export interface FunctionExpression extends PrimaryExpression, FunctionLikeDeclaration {
+        name?: Identifier;
         body: Block | Expression;  // Required, whereas the member inherited from FunctionDeclaration is optional
     }
 
     // The text property of a LiteralExpression stores the interpreted value of the literal in text form. For a StringLiteral,
     // or any literal of a template, this means quotes have been removed and escapes have been converted to actual characters.
     // For a NumericLiteral, the stored value is the toString() representation of the number. For example 1, 1.00, and 1e0 are all stored as just "1".
-    export interface LiteralExpression extends Expression {
+    export interface LiteralExpression extends PrimaryExpression {
         text: string;
+        isUnterminated?: boolean;
     }
 
-    export interface TemplateExpression extends Expression {
+    export interface StringLiteralExpression extends LiteralExpression {
+        _stringLiteralExpressionBrand: any;
+    }
+
+    export interface TemplateExpression extends PrimaryExpression {
         head: LiteralExpression;
         templateSpans: NodeArray<TemplateSpan>;
     }
@@ -410,47 +646,52 @@ module ts {
         literal: LiteralExpression;
     }
 
-    export interface ParenExpression extends Expression {
+    export interface ParenthesizedExpression extends PrimaryExpression {
         expression: Expression;
     }
 
-    export interface ArrayLiteral extends Expression {
+    export interface ArrayLiteralExpression extends PrimaryExpression {
         elements: NodeArray<Expression>;
     }
-
-    export interface ObjectLiteral extends Expression {
-        properties: NodeArray<Node>;
+    
+    // An ObjectLiteralExpression is the declaration node for an anonymous symbol.
+    export interface ObjectLiteralExpression extends PrimaryExpression, Declaration {
+        properties: NodeArray<ObjectLiteralElement>;
     }
 
-    export interface PropertyAccess extends Expression {
-        left: Expression;
-        right: Identifier;
+    export interface PropertyAccessExpression extends MemberExpression {
+        expression: LeftHandSideExpression;
+        name: Identifier;
     }
 
-    export interface IndexedAccess extends Expression {
-        object: Expression;
-        index: Expression;
+    export interface ElementAccessExpression extends MemberExpression {
+        expression: LeftHandSideExpression;
+        argumentExpression?: Expression;
     }
 
-    export interface CallExpression extends Expression {
-        func: Expression;
+    export interface CallExpression extends LeftHandSideExpression {
+        expression: LeftHandSideExpression;
         typeArguments?: NodeArray<TypeNode>;
         arguments: NodeArray<Expression>;
     }
 
-    export interface NewExpression extends CallExpression { }
+    export interface NewExpression extends CallExpression, PrimaryExpression { }
 
-    export interface TaggedTemplateExpression extends Expression {
-        tag: Expression;
+    export interface TaggedTemplateExpression extends MemberExpression {
+        tag: LeftHandSideExpression;
         template: LiteralExpression | TemplateExpression;
     }
 
-    export interface TypeAssertion extends Expression {
+    export type CallLikeExpression = CallExpression | NewExpression | TaggedTemplateExpression;
+
+    export interface TypeAssertion extends UnaryExpression {
         type: TypeNode;
-        operand: Expression;
+        expression: UnaryExpression;
     }
 
-    export interface Statement extends Node { }
+    export interface Statement extends Node, ModuleElement {
+        _statementBrand: any;
+    }
 
     export interface Block extends Statement {
         statements: NodeArray<Statement>;
@@ -490,7 +731,7 @@ module ts {
     }
 
     export interface ForInStatement extends IterationStatement {
-        declaration?: VariableDeclaration;
+        declarations?: NodeArray<VariableDeclaration>;
         variable?: Expression;
         expression: Expression;
     }
@@ -513,10 +754,16 @@ module ts {
         clauses: NodeArray<CaseOrDefaultClause>;
     }
 
-    export interface CaseOrDefaultClause extends Node {
+    export interface CaseClause extends Node {
         expression?: Expression;
         statements: NodeArray<Statement>;
     }
+
+    export interface DefaultClause extends Node {
+        statements: NodeArray<Statement>;
+    }
+
+    export type CaseOrDefaultClause = CaseClause | DefaultClause;
 
     export interface LabeledStatement extends Statement {
         label: Identifier;
@@ -529,49 +776,82 @@ module ts {
 
     export interface TryStatement extends Statement {
         tryBlock: Block;
-        catchBlock?: CatchBlock;
+        catchClause?: CatchClause;
         finallyBlock?: Block;
     }
 
-    export interface CatchBlock extends Block {
-        variable: Identifier;
+    export interface CatchClause extends Declaration {
+        name: Identifier;
+        type?: TypeNode;
+        block: Block;
     }
 
-    export interface ClassDeclaration extends Declaration {
+    export interface ModuleElement extends Node {
+        _moduleElementBrand: any;
+    }
+
+    export interface ClassDeclaration extends Declaration, ModuleElement {
+        name: Identifier;
         typeParameters?: NodeArray<TypeParameterDeclaration>;
-        baseType?: TypeReferenceNode;
-        implementedTypes?: NodeArray<TypeReferenceNode>;
-        members: NodeArray<Node>;
+        heritageClauses?: NodeArray<HeritageClause>;
+        members: NodeArray<ClassElement>;
     }
 
-    export interface InterfaceDeclaration extends Declaration {
+    export interface ClassElement extends Declaration {
+        _classElementBrand: any;
+    }
+
+    export interface InterfaceDeclaration extends Declaration, ModuleElement {
+        name: Identifier;
         typeParameters?: NodeArray<TypeParameterDeclaration>;
-        baseTypes?: NodeArray<TypeReferenceNode>;
-        members: NodeArray<Node>;
+        heritageClauses?: NodeArray<HeritageClause>;
+        members: NodeArray<Declaration>;
     }
 
-    export interface TypeAliasDeclaration extends Declaration {
+    export interface HeritageClause extends Node {
+        token: SyntaxKind;
+        types?: NodeArray<TypeReferenceNode>;
+    }
+
+    export interface TypeAliasDeclaration extends Declaration, ModuleElement {
+        name: Identifier;
         type: TypeNode;
     }
 
     export interface EnumMember extends Declaration {
+        // This does include ComputedPropertyName, but the parser will give an error
+        // if it parses a ComputedPropertyName in an EnumMember
+        name: DeclarationName;
         initializer?: Expression;
     }
 
-    export interface EnumDeclaration extends Declaration {
+    export interface EnumDeclaration extends Declaration, ModuleElement {
+        name: Identifier;
         members: NodeArray<EnumMember>;
     }
 
-    export interface ModuleDeclaration extends Declaration {
-        body: Block | ModuleDeclaration;
+    export interface ModuleDeclaration extends Declaration, ModuleElement {
+        name: Identifier | LiteralExpression;
+        body: ModuleBlock | ModuleDeclaration;
     }
 
-    export interface ImportDeclaration extends Declaration {
-        entityName?: EntityName;
-        externalModuleName?: LiteralExpression;
+    export interface ModuleBlock extends Node, ModuleElement {
+        statements: NodeArray<ModuleElement>
     }
 
-    export interface ExportAssignment extends Statement {
+    export interface ImportDeclaration extends Declaration, ModuleElement {
+        name: Identifier;
+
+        // 'EntityName' for an internal module reference, 'ExternalModuleReference' for an external
+        // module reference.
+        moduleReference: EntityName | ExternalModuleReference;
+    }
+
+    export interface ExternalModuleReference extends Node {
+        expression?: Expression;
+    }
+
+    export interface ExportAssignment extends Statement, ModuleElement {
         exportName: Identifier;
     }
 
@@ -583,22 +863,42 @@ module ts {
         hasTrailingNewLine?: boolean;
     }
 
-    export interface SourceFile extends Block {
+    // Source files are declarations when they are external modules.
+    export interface SourceFile extends Declaration {
+        statements: NodeArray<ModuleElement>;
+        endOfFileToken: Node;
+
         filename: string;
         text: string;
-        getLineAndCharacterFromPosition(position: number): { line: number; character: number };
+        getLineAndCharacterFromPosition(position: number): LineAndCharacter;
         getPositionFromLineAndCharacter(line: number, character: number): number;
+        getLineStarts(): number[];
         amdDependencies: string[];
+        amdModuleName: string;
         referencedFiles: FileReference[];
-        syntacticErrors: Diagnostic[];
-        semanticErrors: Diagnostic[];
+
+        // Diagnostics reported about the "///<reference" comments in the file.
+        referenceDiagnostics: Diagnostic[];
+
+        // Parse errors refer specifically to things the parser could not understand at all (like 
+        // missing tokens, or tokens it didn't know how to deal with).
+        parseDiagnostics: Diagnostic[];
+
+        // Grammar errors are for  things the parser understood, but either the ES6 or TS grammars
+        // do not allow (like putting an 'public' modifier on a 'class declaration').
+        grammarDiagnostics: Diagnostic[];
+
+        // Returns all syntactic diagnostics (i.e. the reference, parser and grammar diagnostics).
+        getSyntacticDiagnostics(): Diagnostic[];
+
+        // File level diagnostics reported by the binder.
+        semanticDiagnostics: Diagnostic[];
+
         hasNoDefaultLib: boolean;
         externalModuleIndicator: Node; // The first node that causes this file to be an external module
         nodeCount: number;
         identifierCount: number;
         symbolCount: number;
-        isOpen: boolean;
-        version: string;
         languageVersion: ScriptTarget;
         identifiers: Map<string>;
     }
@@ -647,22 +947,21 @@ module ts {
 
     export interface EmitResult {
         emitResultStatus: EmitReturnStatus;
-        errors: Diagnostic[];
+        diagnostics: Diagnostic[];
         sourceMaps: SourceMapData[];  // Array of sourceMapData if compiler emitted sourcemaps
     }
 
     export interface TypeChecker {
         getProgram(): Program;
         getDiagnostics(sourceFile?: SourceFile): Diagnostic[];
+        getDeclarationDiagnostics(sourceFile: SourceFile): Diagnostic[];
         getGlobalDiagnostics(): Diagnostic[];
         getNodeCount(): number;
         getIdentifierCount(): number;
         getSymbolCount(): number;
         getTypeCount(): number;
-        checkProgram(): void;
         emitFiles(targetSourceFile?: SourceFile): EmitResult;
-        getParentOfSymbol(symbol: Symbol): Symbol;
-        getTypeOfSymbol(symbol: Symbol): Type;
+        getTypeOfSymbolAtLocation(symbol: Symbol, node: Node): Type;
         getDeclaredTypeOfSymbol(symbol: Symbol): Type;
         getPropertiesOfType(type: Type): Symbol[];
         getPropertyOfType(type: Type, propertyName: string): Symbol;
@@ -670,24 +969,25 @@ module ts {
         getIndexTypeOfType(type: Type, kind: IndexKind): Type;
         getReturnTypeOfSignature(signature: Signature): Type;
         getSymbolsInScope(location: Node, meaning: SymbolFlags): Symbol[];
-        getSymbolInfo(node: Node): Symbol;
-        getTypeOfNode(node: Node): Type;
+        getSymbolAtLocation(node: Node): Symbol;
+        getShorthandAssignmentValueSymbol(location: Node): Symbol;
+        getTypeAtLocation(node: Node): Type;
         typeToString(type: Type, enclosingDeclaration?: Node, flags?: TypeFormatFlags): string;
         symbolToString(symbol: Symbol, enclosingDeclaration?: Node, meaning?: SymbolFlags): string;
         getSymbolDisplayBuilder(): SymbolDisplayBuilder;
         getFullyQualifiedName(symbol: Symbol): string;
         getAugmentedPropertiesOfType(type: Type): Symbol[];
         getRootSymbols(symbol: Symbol): Symbol[];
-        getContextualType(node: Node): Type;
-        getResolvedSignature(node: CallExpression, candidatesOutArray?: Signature[]): Signature;
+        getContextualType(node: Expression): Type;
+        getResolvedSignature(node: CallLikeExpression, candidatesOutArray?: Signature[]): Signature;
         getSignatureFromDeclaration(declaration: SignatureDeclaration): Signature;
-        isImplementationOfOverload(node: FunctionDeclaration): boolean;
+        isImplementationOfOverload(node: FunctionLikeDeclaration): boolean;
         isUndefinedSymbol(symbol: Symbol): boolean;
         isArgumentsSymbol(symbol: Symbol): boolean;
-        hasEarlyErrors(sourceFile?: SourceFile): boolean;
+        isEmitBlocked(sourceFile?: SourceFile): boolean;
         // Returns the constant value of this enum member, or 'undefined' if the enum member has a computed value.
         getEnumMemberValue(node: EnumMember): number;
-        isValidPropertyAccess(node: PropertyAccess, propertyName: string): boolean;
+        isValidPropertyAccess(node: PropertyAccessExpression | QualifiedName, propertyName: string): boolean;
         getAliasedSymbol(symbol: Symbol): Symbol;
     }
 
@@ -750,32 +1050,37 @@ module ts {
         CannotBeNamed
     }
 
-    export interface SymbolAccessiblityResult {
+    export interface SymbolVisibilityResult {
         accessibility: SymbolAccessibility;
-        errorSymbolName?: string // Optional symbol name that results in error
-        errorModuleName?: string // If the symbol is not visible from module, module's name
         aliasesToMakeVisible?: ImportDeclaration[]; // aliases that need to have this symbol visible
+        errorSymbolName?: string; // Optional symbol name that results in error
+        errorNode?: Node; // optional node that results in error
+    }
+
+    export interface SymbolAccessiblityResult extends SymbolVisibilityResult {
+        errorModuleName?: string // If the symbol is not visible from module, module's name
     }
 
     export interface EmitResolver {
         getProgram(): Program;
-        getLocalNameOfContainer(container: Declaration): string;
+        getLocalNameOfContainer(container: ModuleDeclaration | EnumDeclaration): string;
         getExpressionNamePrefix(node: Identifier): string;
         getExportAssignmentName(node: SourceFile): string;
         isReferencedImportDeclaration(node: ImportDeclaration): boolean;
         isTopLevelValueImportWithEntityName(node: ImportDeclaration): boolean;
         getNodeCheckFlags(node: Node): NodeCheckFlags;
         getEnumMemberValue(node: EnumMember): number;
-        hasSemanticErrors(): boolean;
+        hasSemanticErrors(sourceFile?: SourceFile): boolean;
         isDeclarationVisible(node: Declaration): boolean;
-        isImplementationOfOverload(node: FunctionDeclaration): boolean;
-        writeTypeAtLocation(location: Node, enclosingDeclaration: Node, flags: TypeFormatFlags, writer: SymbolWriter): void;
+        isImplementationOfOverload(node: FunctionLikeDeclaration): boolean;
+        writeTypeOfDeclaration(declaration: AccessorDeclaration | VariableLikeDeclaration, enclosingDeclaration: Node, flags: TypeFormatFlags, writer: SymbolWriter): void;
         writeReturnTypeOfSignatureDeclaration(signatureDeclaration: SignatureDeclaration, enclosingDeclaration: Node, flags: TypeFormatFlags, writer: SymbolWriter): void;
         isSymbolAccessible(symbol: Symbol, enclosingDeclaration: Node, meaning: SymbolFlags): SymbolAccessiblityResult;
-        isImportDeclarationEntityNameReferenceDeclarationVisibile(entityName: EntityName): SymbolAccessiblityResult;
+        isEntityNameVisible(entityName: EntityName, enclosingDeclaration: Node): SymbolVisibilityResult;
         // Returns the constant value this property access resolves to, or 'undefined' for a non-constant
-        getConstantValue(node: PropertyAccess | IndexedAccess): number;
-        hasEarlyErrors(sourceFile?: SourceFile): boolean;
+        getConstantValue(node: PropertyAccessExpression | ElementAccessExpression): number;
+        isEmitBlocked(sourceFile?: SourceFile): boolean;
+        isUnknownIdentifier(location: Node, name: string): boolean;
     }
 
     export const enum SymbolFlags {
@@ -796,35 +1101,33 @@ module ts {
         Constructor            = 0x00004000,  // Constructor
         GetAccessor            = 0x00008000,  // Get accessor
         SetAccessor            = 0x00010000,  // Set accessor
-        CallSignature          = 0x00020000,  // Call signature
-        ConstructSignature     = 0x00040000,  // Construct signature
-        IndexSignature         = 0x00080000,  // Index signature
-        TypeParameter          = 0x00100000,  // Type parameter
-        TypeAlias              = 0x00200000,  // Type alias
+        Signature              = 0x00020000,  // Call, construct, or index signature
+        TypeParameter          = 0x00040000,  // Type parameter
+        TypeAlias              = 0x00080000,  // Type alias
 
         // Export markers (see comment in declareModuleMember in binder)
-        ExportValue            = 0x00400000,  // Exported value marker
-        ExportType             = 0x00800000,  // Exported type marker
-        ExportNamespace        = 0x01000000,  // Exported namespace marker
-        Import                 = 0x02000000,  // Import
-        Instantiated           = 0x04000000,  // Instantiated symbol
-        Merged                 = 0x08000000,  // Merged symbol (created during program binding)
-        Transient              = 0x10000000,  // Transient symbol (created during type check)
-        Prototype              = 0x20000000,  // Prototype property (no source representation)
-        UnionProperty          = 0x40000000,  // Property in union type
+        ExportValue            = 0x00100000,  // Exported value marker
+        ExportType             = 0x00200000,  // Exported type marker
+        ExportNamespace        = 0x00400000,  // Exported namespace marker
+        Import                 = 0x00800000,  // Import
+        Instantiated           = 0x01000000,  // Instantiated symbol
+        Merged                 = 0x02000000,  // Merged symbol (created during program binding)
+        Transient              = 0x04000000,  // Transient symbol (created during type check)
+        Prototype              = 0x08000000,  // Prototype property (no source representation)
+        UnionProperty          = 0x10000000,  // Property in union type
+        Optional               = 0x20000000,  // Optional property
 
-        Enum                   = RegularEnum | ConstEnum,
+        Enum      = RegularEnum | ConstEnum,
         Variable  = FunctionScopedVariable | BlockScopedVariable,
         Value     = Variable | Property | EnumMember | Function | Class | Enum | ValueModule | Method | GetAccessor | SetAccessor,
         Type      = Class | Interface | Enum | TypeLiteral | ObjectLiteral | TypeParameter | TypeAlias,
         Namespace = ValueModule | NamespaceModule,
         Module    = ValueModule | NamespaceModule,
         Accessor  = GetAccessor | SetAccessor,
-        Signature = CallSignature | ConstructSignature | IndexSignature,
 
-        // Variables can be redeclared, but can not redeclare a block-scoped declaration with the 
+        // Variables can be redeclared, but can not redeclare a block-scoped declaration with the
         // same name, or any other value that is not a variable, e.g. ValueModule or Class
-        FunctionScopedVariableExcludes = Value & ~FunctionScopedVariable,   
+        FunctionScopedVariableExcludes = Value & ~FunctionScopedVariable,
 
         // Block-scoped declarations are not allowed to be re-declared
         // they can not merge with anything in the value space
@@ -933,12 +1236,12 @@ module ts {
         Union              = 0x00004000,  // Union
         Anonymous          = 0x00008000,  // Anonymous
         FromSignature      = 0x00010000,  // Created for signature assignment check
+        Unwidened          = 0x00020000,  // Unwidened type (is or contains Undefined or Null type)
 
         Intrinsic  = Any | String | Number | Boolean | Void | Undefined | Null,
         StringLike = String | StringLiteral,
         NumberLike = Number | Enum,
         ObjectType = Class | Interface | Reference | Tuple | Anonymous,
-        Structured = Any | ObjectType | Union | TypeParameter
     }
 
     // Properties common to all types
@@ -1080,6 +1383,9 @@ module ts {
         messageText: string;
         category: DiagnosticCategory;
         code: number;
+        /**
+          * Early error - any error (can be produced at parsing\binding\typechecking step) that blocks emit
+          */
         isEarly?: boolean;
     }
 
@@ -1090,6 +1396,7 @@ module ts {
     }
 
     export interface CompilerOptions {
+        allowNonTsExtensions?: boolean;
         charset?: string;
         codepage?: number;
         declaration?: boolean;
@@ -1099,6 +1406,7 @@ module ts {
         locale?: string;
         mapRoot?: string;
         module?: ModuleKind;
+        noEmitOnError?: boolean;
         noErrorTruncation?: boolean;
         noImplicitAny?: boolean;
         noLib?: boolean;
@@ -1106,20 +1414,21 @@ module ts {
         noResolve?: boolean;
         out?: string;
         outDir?: string;
+        preserveConstEnums?: boolean;
         removeComments?: boolean;
         sourceMap?: boolean;
         sourceRoot?: string;
+        suppressImplicitAnyIndexErrors?: boolean;
         target?: ScriptTarget;
         version?: boolean;
         watch?: boolean;
-        preserveConstEnums?: boolean;
         [option: string]: string | number | boolean;
     }
 
     export const enum ModuleKind {
-        None,
-        CommonJS,
-        AMD,
+        None = 0,
+        CommonJS = 1,
+        AMD = 2,
     }
 
     export interface LineAndCharacter {
@@ -1132,9 +1441,9 @@ module ts {
 
 
     export const enum ScriptTarget {
-        ES3,
-        ES5,
-        ES6,
+        ES3 = 0,
+        ES5 = 1,
+        ES6 = 2,
         Latest = ES6,
     }
 
@@ -1147,9 +1456,9 @@ module ts {
     export interface CommandLineOption {
         name: string;
         type: string | Map<number>;         // "string", "number", "boolean", or an object literal mapping named values to actual values
-        shortName?: string;                 // A short pneumonic for convenience - for instance, 'h' can be used in place of 'help'.
+        shortName?: string;                 // A short mnemonic for convenience - for instance, 'h' can be used in place of 'help'.
         description?: DiagnosticMessage;    // The message describing what the command line switch does
-        paramName?: DiagnosticMessage;      // The name to be used for a non-boolean option's parameter.
+        paramType?: DiagnosticMessage;      // The name to be used for a non-boolean option's parameter.
         error?: DiagnosticMessage;          // The error given when the argument does not fit a customized 'type'.
     }
 
@@ -1287,14 +1596,14 @@ module ts {
         tab = 0x09,                   // \t
         verticalTab = 0x0B,           // \v
     }
-    
+
     export interface CancellationToken {
         isCancellationRequested(): boolean;
     }
 
     export interface CompilerHost {
         getSourceFile(filename: string, languageVersion: ScriptTarget, onError?: (message: string) => void): SourceFile;
-        getDefaultLibFilename(): string;
+        getDefaultLibFilename(options: CompilerOptions): string;
         getCancellationToken? (): CancellationToken;
         writeFile(filename: string, data: string, writeByteOrderMark: boolean, onError?: (message: string) => void): void;
         getCurrentDirectory(): string;

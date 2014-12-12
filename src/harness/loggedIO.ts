@@ -91,7 +91,7 @@ module Playback {
         return run;
     }
 
-    export interface PlaybackSystem extends System, PlaybackControl { }
+    export interface PlaybackSystem extends ts.System, PlaybackControl { }
 
     function createEmptyLog(): IOLog {
         return {
@@ -175,10 +175,10 @@ module Playback {
     }
 
     function findResultByPath<T>(wrapper: { resolvePath(s: string): string }, logArray: { path: string; result?: T }[], expectedPath: string, defaultValue?: T): T {
-        var normalizedName = Harness.Path.switchToForwardSlashes(expectedPath).toLowerCase();
+        var normalizedName = ts.normalizeSlashes(expectedPath).toLowerCase();
         // Try to find the result through normal filename
         for (var i = 0; i < logArray.length; i++) {
-            if (Harness.Path.switchToForwardSlashes(logArray[i].path).toLowerCase() === normalizedName) {
+            if (ts.normalizeSlashes(logArray[i].path).toLowerCase() === normalizedName) {
                 return logArray[i].result;
             }
         }
@@ -203,7 +203,7 @@ module Playback {
     function pathsAreEquivalent(left: string, right: string, wrapper: { resolvePath(s: string): string }) {
         var key = left + '-~~-' + right;
         function areSame(a: string, b: string) {
-            return Harness.Path.switchToForwardSlashes(a).toLowerCase() === Harness.Path.switchToForwardSlashes(b).toLowerCase();
+            return ts.normalizeSlashes(a).toLowerCase() === ts.normalizeSlashes(b).toLowerCase();
         }
         function check() {
             if (Harness.Path.getFileName(left).toLowerCase() === Harness.Path.getFileName(right).toLowerCase()) {
@@ -221,7 +221,7 @@ module Playback {
         //console.log("Swallowed write operation during replay: " + name);
     }
 
-    export function wrapSystem(underlying: System): PlaybackSystem {
+    export function wrapSystem(underlying: ts.System): PlaybackSystem {
         var wrapper: PlaybackSystem = <any>{};
         initWrapper(wrapper, underlying);
 

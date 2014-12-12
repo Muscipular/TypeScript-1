@@ -113,10 +113,7 @@ class CompilerBaselineRunner extends RunnerBase {
                 for (var i = 0; i < tcSettings.length; ++i) {
                     // noImplicitAny is passed to getCompiler, but target is just passed in the settings blob to setCompilerSettings
                     if (!createNewInstance && (tcSettings[i].flag == "noimplicitany" || tcSettings[i].flag === 'target')) {
-                        harnessCompiler = Harness.Compiler.getCompiler({
-                            useExistingInstance: false,
-                            optionsForFreshInstance: { useMinimalDefaultLib: true, noImplicitAny: tcSettings[i].flag === "noimplicitany" }
-                        });
+                        harnessCompiler = Harness.Compiler.getCompiler();
                         harnessCompiler.setCompilerSettings(tcSettings);
                         createNewInstance = true;
                     }
@@ -125,10 +122,7 @@ class CompilerBaselineRunner extends RunnerBase {
 
             afterEach(() => {
                 if (createNewInstance) {
-                    harnessCompiler = Harness.Compiler.getCompiler({
-                        useExistingInstance: false,
-                        optionsForFreshInstance: { useMinimalDefaultLib: true, noImplicitAny: false }
-                    });
+                    harnessCompiler = Harness.Compiler.getCompiler();
                     createNewInstance = false;
                 }
             });
@@ -175,7 +169,12 @@ class CompilerBaselineRunner extends RunnerBase {
             it('Correct sourcemap content for ' + fileName, () => {
                 if (options.sourceMap) {
                     Harness.Baseline.runBaseline('Correct sourcemap content for ' + fileName, justName.replace(/\.ts$/, '.sourcemap.txt'), () => {
-                        return result.getSourceMapRecord();
+                        var record = result.getSourceMapRecord();
+                        if (options.noEmitOnError && result.errors.length !== 0 && record === undefined) {
+                            // Because of the noEmitOnError option no files are created. We need to return null because baselining isn't required.
+                            return null;
+                        }
+                        return record;
                     });
                 }
             });
@@ -246,6 +245,12 @@ class CompilerBaselineRunner extends RunnerBase {
                     }
 
                     Harness.Baseline.runBaseline('Correct Sourcemap output for ' + fileName, justName.replace(/\.ts/, '.js.map'), () => {
+                        if (options.noEmitOnError && result.errors.length !== 0 && result.sourceMaps.length === 0) {
+                            // We need to return null here or the runBaseLine will actually create a empty file.
+                            // Baselining isn't required here because there is no output.
+                            return null;
+                        }
+
                         var sourceMapCode = '';
                         for (var i = 0; i < result.sourceMaps.length; i++) {
                             sourceMapCode += '//// [' + Harness.Path.getFileName(result.sourceMaps[i].fileName) + ']\r\n';
@@ -285,12 +290,10 @@ class CompilerBaselineRunner extends RunnerBase {
                             typeLines.push('=== ' + file.unitName + ' ===\r\n');
                             for (var i = 0; i < codeLines.length; i++) {
                                 var currentCodeLine = codeLines[i];
-                                var lastLine = typeLines[typeLines.length];
                                 typeLines.push(currentCodeLine + '\r\n');
                                 if (typeMap[file.unitName]) {
                                     var typeInfo = typeMap[file.unitName][i];
                                     if (typeInfo) {
-                                        var leadingSpaces = '';
                                         typeInfo.forEach(ty => {
                                             typeLines.push('>' + ty + '\r\n');
                                         });
@@ -314,10 +317,7 @@ class CompilerBaselineRunner extends RunnerBase {
 
     public initializeTests() {
         describe("Setup compiler for compiler baselines", () => {
-            var harnessCompiler = Harness.Compiler.getCompiler({
-                useExistingInstance: false,
-                optionsForFreshInstance: { useMinimalDefaultLib: true, noImplicitAny: false }
-            });
+            var harnessCompiler = Harness.Compiler.getCompiler();
             this.parseOptions();
         });
 
@@ -334,10 +334,7 @@ class CompilerBaselineRunner extends RunnerBase {
         }
 
         describe("Cleanup after compiler baselines", () => {
-            var harnessCompiler = Harness.Compiler.getCompiler({
-                useExistingInstance: false,
-                optionsForFreshInstance: { useMinimalDefaultLib: true, noImplicitAny: false }
-            });
+            var harnessCompiler = Harness.Compiler.getCompiler();
         });
     }
 

@@ -136,22 +136,23 @@ module FourSlash {
        outDir: 'outDir',
        sourceMap: 'sourceMap',
        sourceRoot: 'sourceRoot',
+       resolveReference: 'ResolveReference',  // This flag is used to specify entry file for resolve file references. The flag is only allow once per test file
     };
 
     // List of allowed metadata names
-    var fileMetadataNames = [testOptMetadataNames.filename, testOptMetadataNames.emitThisFile];
+    var fileMetadataNames = [testOptMetadataNames.filename, testOptMetadataNames.emitThisFile, testOptMetadataNames.resolveReference];
     var globalMetadataNames = [testOptMetadataNames.baselineFile,  testOptMetadataNames.declaration,
         testOptMetadataNames.mapRoot, testOptMetadataNames.module, testOptMetadataNames.out,
         testOptMetadataNames.outDir, testOptMetadataNames.sourceMap, testOptMetadataNames.sourceRoot]
 
-    function convertGlobalOptionsToCompilationSettings(globalOptions: { [idx: string]: string }): ts.CompilationSettings {
-        var settings: ts.CompilationSettings = {};
+    function convertGlobalOptionsToCompilerOptions(globalOptions: { [idx: string]: string }): ts.CompilerOptions {
+        var settings: ts.CompilerOptions = {};
         // Convert all property in globalOptions into ts.CompilationSettings
         for (var prop in globalOptions) {
             if (globalOptions.hasOwnProperty(prop)) {
                 switch (prop) {
                     case testOptMetadataNames.declaration:
-                        settings.generateDeclarationFiles = true;
+                        settings.declaration = true;
                         break;
                     case testOptMetadataNames.mapRoot:
                         settings.mapRoot = globalOptions[prop];
@@ -160,24 +161,25 @@ module FourSlash {
                         // create appropriate external module target for CompilationSettings
                         switch (globalOptions[prop]) {
                           case "AMD":
-                            settings.moduleGenTarget = ts.ModuleGenTarget.Asynchronous;
+                            settings.module = ts.ModuleKind.AMD;
                             break;
                           case "CommonJS":
-                            settings.moduleGenTarget = ts.ModuleGenTarget.Synchronous;
+                            settings.module = ts.ModuleKind.CommonJS;
                             break;
                           default:
-                            settings.moduleGenTarget = ts.ModuleGenTarget.Unspecified;
+                            ts.Debug.assert(globalOptions[prop] === undefined || globalOptions[prop] === "None");
+                            settings.module = ts.ModuleKind.None;
                             break;
                         }
                         break;
                     case testOptMetadataNames.out:
-                        settings.outFileOption = globalOptions[prop];
+                        settings.out = globalOptions[prop];
                         break;
                     case testOptMetadataNames.outDir:
-                        settings.outDirOption = globalOptions[prop];
+                        settings.outDir = globalOptions[prop];
                         break;
                     case testOptMetadataNames.sourceMap:
-                        settings.mapSourceFiles = true;
+                        settings.sourceMap = true;
                         break;
                     case testOptMetadataNames.sourceRoot:
                         settings.sourceRoot = globalOptions[prop];
@@ -214,7 +216,7 @@ module FourSlash {
         }
 
         public setCancelled(numberOfCalls: number = 0): void {
-            TypeScript.Debug.assert(numberOfCalls >= 0);
+            ts.Debug.assert(numberOfCalls >= 0);
             this.numberOfCallsBeforeCancellation = numberOfCalls;
         }
 
@@ -236,13 +238,32 @@ module FourSlash {
         throw new Error("Operation should be cancelled");
     }
 
+    // This function creates IScriptSnapshot object for testing getPreProcessedFileInfo
+    // Return object may lack some functionalities for other purposes.
+    function createScriptSnapShot(sourceText: string): ts.IScriptSnapshot {
+        return {
+            getText: (start: number, end: number) => {
+                return sourceText.substr(start, end - start);
+            },
+            getLength: () => {
+                return sourceText.length;
+            },
+            getLineStartPositions: () => {
+                return <number[]>[];
+            },
+            getChangeRange: (oldSnapshot: ts.IScriptSnapshot) => {
+                return <ts.TextChangeRange>undefined;
+            }
+        };
+    }
+
     export class TestState {
         // Language service instance
         public languageServiceShimHost: Harness.LanguageService.TypeScriptLS;
         private languageService: ts.LanguageService;
 
         // A reference to the language service's compiler state's compiler instance
-        private compiler: () => { getSyntaxTree(fileName: string): TypeScript.SyntaxTree; getSourceUnit(fileName: string): TypeScript.SourceUnitSyntax; };
+        private compiler: () => { getSyntaxTree(fileName: string): ts.SourceFile };
 
         // The current caret position in the active file
         public currentCaretPosition = 0;
@@ -264,66 +285,76 @@ module FourSlash {
         private scenarioActions: string[] = [];
         private taoInvalidReason: string = null;
 
+        private inputFiles: ts.Map<string> = {};  // Map between inputFile's filename and its content for easily looking up when resolving references
+        
+        // Add input file which has matched file name with the given reference-file path.
+        // This is necessary when resolveReference flag is specified
+        private addMatchedInputFile(referenceFilePath: string) {
+            var inputFile = this.inputFiles[referenceFilePath];
+            if (inputFile && !Harness.isLibraryFile(referenceFilePath)) {
+                this.languageServiceShimHost.addScript(referenceFilePath, inputFile);
+            }
+        }
 
         constructor(public testData: FourSlashData) {
             // Initialize the language service with all the scripts
             this.cancellationToken = new TestCancellationToken();
             this.languageServiceShimHost = new Harness.LanguageService.TypeScriptLS(this.cancellationToken);
 
-            var compilationSettings = convertGlobalOptionsToCompilationSettings(this.testData.globalOptions);
+            var compilationSettings = convertGlobalOptionsToCompilerOptions(this.testData.globalOptions);
             this.languageServiceShimHost.setCompilationSettings(compilationSettings);
 
-            var inputFiles: { unitName: string; content: string }[] = [];
+            var startResolveFileRef: FourSlashFile = undefined;
 
-            testData.files.forEach(file => {
-                var fixedPath = file.fileName.substr(file.fileName.indexOf('tests/'));
-            });
-
-            // NEWTODO: disable resolution for now.
-            // If the last unit contains require( or /// reference then consider it the only input file
-            // and the rest will be added via resolution. If not, then assume we have multiple files
-            // with 0 references in any of them. We could be smarter here to allow scenarios like
-            // 2 files without references and 1 file with a reference but we have 0 tests like that
-            // at the moment and an exhaustive search of the test files for that content could be quite slow.
-            var lastFile = testData.files[testData.files.length - 1];
-            //if (/require\(/.test(lastFile.content) || /reference\spath/.test(lastFile.content)) {
-            //    inputFiles.push({ unitName: lastFile.fileName, content: lastFile.content });
-            //} else {
-            inputFiles = testData.files.map(file => {
-                return { unitName: file.fileName, content: file.content };
-            });
-            //}
-
-
-            // NEWTODO: Re-implement commented-out section
-            //harnessCompiler.addInputFiles(inputFiles);
-            //try {
-            //    var resolvedFiles = harnessCompiler.resolve();
-
-            //    resolvedFiles.forEach(file => {
-            //        if (!Harness.isLibraryFile(file.path)) {
-            //            var fixedPath = file.path.substr(file.path.indexOf('tests/'));
-            //            var content = harnessCompiler.getContentForFile(fixedPath);
-            //            this.languageServiceShimHost.addScript(fixedPath, content);
-            //        }
-            //    });
-
-            //    this.languageServiceShimHost.addScript('lib.d.ts', Harness.Compiler.libTextMinimal);
-            //}
-            //finally {
-            //    // harness no longer needs the results of the above work, make sure the next test operations are in a clean state
-            //    harnessCompiler.reset();
-            //}
-
-            /// NEWTODO: For now do not resolve, just use the input files
-            inputFiles.forEach(file => {
-                if (!Harness.isLibraryFile(file.unitName)) {
-                    this.languageServiceShimHost.addScript(file.unitName, file.content);
+            ts.forEach(testData.files, file => {
+                // Create map between fileName and its content for easily looking up when resolveReference flag is specified
+                this.inputFiles[file.fileName] = file.content;
+                if (!startResolveFileRef && file.fileOptions[testOptMetadataNames.resolveReference]) {
+                    startResolveFileRef = file;
+                } else if (startResolveFileRef) {
+                    // If entry point for resolving file references is already specified, report duplication error
+                    throw new Error("There exists a Fourslash file which has resolveReference flag specified; remove duplicated resolveReference flag");
                 }
             });
 
-            this.languageServiceShimHost.addDefaultLibrary();
+            if (startResolveFileRef) {
+                // Add the entry-point file itself into the languageServiceShimHost
+                this.languageServiceShimHost.addScript(startResolveFileRef.fileName, startResolveFileRef.content);
 
+                var jsonResolvedResult = JSON.parse(this.languageServiceShimHost.getCoreService().getPreProcessedFileInfo(startResolveFileRef.fileName,
+                    createScriptSnapShot(startResolveFileRef.content)));
+                var resolvedResult = jsonResolvedResult.result;
+                var referencedFiles: ts.IFileReference[] = resolvedResult.referencedFiles;
+                var importedFiles: ts.IFileReference[] = resolvedResult.importedFiles;
+
+                // Add triple reference files into language-service host
+                ts.forEach(referencedFiles, referenceFile => {
+                    // Fourslash insert tests/cases/fourslash into inputFile.unitName so we will properly append the same base directory to refFile path
+                    var referenceFilePath = "tests/cases/fourslash/" + referenceFile.path;
+                    this.addMatchedInputFile(referenceFilePath);
+                });
+
+                // Add import files into language-service host
+                ts.forEach(importedFiles, importedFile => {
+                    // Fourslash insert tests/cases/fourslash into inputFile.unitName and import statement doesn't require ".ts"
+                    // so convert them before making appropriate comparison
+                    var importedFilePath = "tests/cases/fourslash/" + importedFile.path + ".ts";
+                    this.addMatchedInputFile(importedFilePath);
+                });
+
+                // Check if no-default-lib flag is false and if so add default library
+                if (!resolvedResult.isLibFile) {
+                    this.languageServiceShimHost.addDefaultLibrary();
+                }
+            } else {
+                // resolveReference file-option is not specified then do not resolve any files and include all inputFiles
+                ts.forEachKey(this.inputFiles, fileName => {
+                    if (!Harness.isLibraryFile(fileName)) {
+                        this.languageServiceShimHost.addScript(fileName, this.inputFiles[fileName]);
+                    }
+                });
+                this.languageServiceShimHost.addDefaultLibrary();
+            }
 
             // Sneak into the language service and get its compiler so we can examine the syntax trees
             this.languageService = this.languageServiceShimHost.getLanguageService().languageService;
@@ -333,7 +364,7 @@ module FourSlash {
             this.formatCodeOptions = {
                 IndentSize: 4,
                 TabSize: 4,
-                NewLineCharacter: sys.newLine,
+                NewLineCharacter: ts.sys.newLine,
                 ConvertTabsToSpaces: true,
                 InsertSpaceAfterCommaDelimiter: true,
                 InsertSpaceAfterSemicolonInForStatements: true,
@@ -373,8 +404,9 @@ module FourSlash {
         public goToPosition(pos: number) {
             this.currentCaretPosition = pos;
 
-            var lineCharPos = TypeScript.LineMap1.fromString(this.getCurrentFileContent()).getLineAndCharacterFromPosition(pos);
-            this.scenarioActions.push('<MoveCaretToLineAndChar LineNumber="' + (lineCharPos.line() + 1) + '" CharNumber="' + (lineCharPos.character() + 1) + '" />');
+            var lineStarts = ts.computeLineStarts(this.getCurrentFileContent());
+            var lineCharPos = ts.getLineAndCharacterOfPosition(lineStarts, pos);
+            this.scenarioActions.push('<MoveCaretToLineAndChar LineNumber="' + lineCharPos.line + '" CharNumber="' + lineCharPos.character + '" />');
         }
 
         public moveCaretRight(count = 1) {
@@ -718,35 +750,12 @@ module FourSlash {
             }
         }
 
-        public verifyImplementorsCountIs(count: number, localFilesOnly: boolean = true) {
-            var implementors = this.getImplementorsAtCaret();
-            var implementorsCount = 0;
-
-            if (localFilesOnly) {
-                var localFiles = this.testData.files.map<string>(file => file.fileName);
-                // Count only the references in local files. Filter the ones in lib and other files.
-                implementors.forEach((entry) => {
-                    if (localFiles.some((filename) => filename === entry.fileName)) {
-                        ++implementorsCount;
-                    }
-                });
-            }
-            else {
-                implementorsCount = implementors.length;
-            }
-
-            if (implementorsCount !== count) {
-                var condition = localFilesOnly ? "excluding libs" : "including libs";
-                this.raiseError("Expected implementors count (" + condition + ") to be " + count + ", but is actually " + implementors.length);
-            }
-        }
-
         private getMemberListAtCaret() {
-            return this.languageService.getCompletionsAtPosition(this.activeFile.fileName, this.currentCaretPosition, true);
+            return this.languageService.getCompletionsAtPosition(this.activeFile.fileName, this.currentCaretPosition);
         }
 
         private getCompletionListAtCaret() {
-            return this.languageService.getCompletionsAtPosition(this.activeFile.fileName, this.currentCaretPosition, false);
+            return this.languageService.getCompletionsAtPosition(this.activeFile.fileName, this.currentCaretPosition);
         }
 
         private getCompletionEntryDetails(entryName: string) {
@@ -757,15 +766,11 @@ module FourSlash {
             return this.languageService.getReferencesAtPosition(this.activeFile.fileName, this.currentCaretPosition);
         }
 
-        private getImplementorsAtCaret() {
-            return this.languageService.getImplementorsAtPosition(this.activeFile.fileName, this.currentCaretPosition);
-        }
-
         private assertionMessage(name: string, actualValue: any, expectedValue: any) {
             return "\nActual " + name + ":\n\t" + actualValue + "\nExpected value:\n\t" + expectedValue;
         }
 
-        public verifyQuickInfo(negative: boolean, expectedText?: string, expectedDocumentation?: string) {
+        public verifyQuickInfoString(negative: boolean, expectedText?: string, expectedDocumentation?: string) {
         [expectedText, expectedDocumentation].forEach(str => {
                 if (str) {
                     this.scenarioActions.push('<ShowQuickInfo />');
@@ -792,6 +797,39 @@ module FourSlash {
                     assert.equal(actualQuickInfoDocumentation, expectedDocumentation, assertionMessage("quick info doc"));
                 }
             }
+        }
+
+
+        public verifyQuickInfoDisplayParts(kind: string, kindModifiers: string, textSpan: { start: number; length: number; },
+            displayParts: ts.SymbolDisplayPart[],
+            documentation: ts.SymbolDisplayPart[]) {
+            this.scenarioActions.push('<ShowQuickInfo />');
+            this.scenarioActions.push('<Verify return values of quickInfo="' + JSON.stringify(displayParts) + '"/>');
+
+            function getDisplayPartsJson(displayParts: ts.SymbolDisplayPart[]) {
+                var result = "";
+                ts.forEach(displayParts, part => {
+                    if (result) {
+                        result += ",\n    ";
+                    }
+                    else {
+                        result = "[\n    ";
+                    }
+                    result += JSON.stringify(part);
+                }); 
+                if (result) {
+                    result += "\n]";
+                }
+
+                return result;
+            }
+
+            var actualQuickInfo = this.languageService.getQuickInfoAtPosition(this.activeFile.fileName, this.currentCaretPosition);
+            assert.equal(actualQuickInfo.kind, kind, this.messageAtLastKnownMarker("QuickInfo kind"));
+            assert.equal(actualQuickInfo.kindModifiers, kindModifiers, this.messageAtLastKnownMarker("QuickInfo kindModifiers"));
+            assert.equal(JSON.stringify(actualQuickInfo.textSpan), JSON.stringify(textSpan), this.messageAtLastKnownMarker("QuickInfo textSpan"));
+            assert.equal(getDisplayPartsJson(actualQuickInfo.displayParts), getDisplayPartsJson(displayParts), this.messageAtLastKnownMarker("QuickInfo displayParts"));
+            assert.equal(getDisplayPartsJson(actualQuickInfo.documentation), getDisplayPartsJson(documentation), this.messageAtLastKnownMarker("QuickInfo documentation"));
         }
 
         public verifyRenameLocations(findInStrings: boolean, findInComments: boolean) {
@@ -987,11 +1025,11 @@ module FourSlash {
 
         private alignmentForExtraInfo = 50;
 
-        private spanInfoToString(pos: number, spanInfo: TypeScript.TextSpan, prefixString: string) {
+        private spanInfoToString(pos: number, spanInfo: ts.TextSpan, prefixString: string) {
             var resultString = "SpanInfo: " + JSON.stringify(spanInfo);
             if (spanInfo) {
                 var spanString = this.activeFile.content.substr(spanInfo.start(), spanInfo.length());
-                var spanLineMap = ts.getLineStarts(spanString);
+                var spanLineMap = ts.computeLineStarts(spanString);
                 for (var i = 0; i < spanLineMap.length; i++) {
                     if (!i) {
                         resultString += "\n";
@@ -1004,8 +1042,8 @@ module FourSlash {
             return resultString;
         }
 
-        private baselineCurrentFileLocations(getSpanAtPos: (pos: number) => TypeScript.TextSpan): string {
-            var fileLineMap = ts.getLineStarts(this.activeFile.content);
+        private baselineCurrentFileLocations(getSpanAtPos: (pos: number) => ts.TextSpan): string {
+            var fileLineMap = ts.computeLineStarts(this.activeFile.content);
             var nextLine = 0;
             var resultString = "";
             var currentLine: string;
@@ -1327,7 +1365,7 @@ module FourSlash {
                     this.languageService.getSignatureHelpItems(this.activeFile.fileName, offset);
                 } else if (prevChar === ' ' && /A-Za-z_/.test(ch)) {
                     /* Completions */
-                    this.languageService.getCompletionsAtPosition(this.activeFile.fileName, offset, false);
+                    this.languageService.getCompletionsAtPosition(this.activeFile.fileName, offset);
                 }
 
                 if (i % errorCadence === 0) {
@@ -1710,22 +1748,22 @@ module FourSlash {
             }
 
             function jsonMismatchString() {
-                return sys.newLine +
-                    "expected: '" + sys.newLine + JSON.stringify(expected, (k,v) => v, 2) + "'" + sys.newLine +
-                    "actual:   '" + sys.newLine + JSON.stringify(actual, (k, v) => v, 2) + "'";
+                return ts.sys.newLine +
+                    "expected: '" + ts.sys.newLine + JSON.stringify(expected, (k,v) => v, 2) + "'" + ts.sys.newLine +
+                    "actual:   '" + ts.sys.newLine + JSON.stringify(actual, (k, v) => v, 2) + "'";
             }
         }
 
         public verifySemanticClassifications(expected: { classificationType: string; text: string }[]) {
             var actual = this.languageService.getSemanticClassifications(this.activeFile.fileName,
-                new TypeScript.TextSpan(0, this.activeFile.content.length));
+                new ts.TextSpan(0, this.activeFile.content.length));
 
             this.verifyClassifications(expected, actual);
         }
 
         public verifySyntacticClassifications(expected: { classificationType: string; text: string }[]) {
             var actual = this.languageService.getSyntacticClassifications(this.activeFile.fileName, 
-                new TypeScript.TextSpan(0, this.activeFile.content.length));
+                new ts.TextSpan(0, this.activeFile.content.length));
 
             this.verifyClassifications(expected, actual);
         }
@@ -1759,7 +1797,7 @@ module FourSlash {
             for (var i = 0; i < spans.length; i++) {
                 var expectedSpan = spans[i];
                 var actualComment = actual[i];
-                var actualCommentSpan = new TypeScript.TextSpan(actualComment.position, actualComment.message.length);
+                var actualCommentSpan = new ts.TextSpan(actualComment.position, actualComment.message.length);
 
                 if (expectedSpan.start !== actualCommentSpan.start() || expectedSpan.end !== actualCommentSpan.end()) {
                     this.raiseError('verifyOutliningSpans failed - span ' + (i + 1) + ' expected: (' + expectedSpan.start + ',' + expectedSpan.end + '),  actual: (' + actualCommentSpan.start() + ',' + actualCommentSpan.end() + ')');
@@ -2044,10 +2082,6 @@ module FourSlash {
             }
         }
 
-        private getEOF(): number {
-            return this.languageServiceShimHost.getScriptSnapshot(this.activeFile.fileName).getLength();
-        }
-
         // Get the text of the entire line the caret is currently at
         private getCurrentLineContent() {
             // The current caret position (in line/col terms)
@@ -2163,14 +2197,6 @@ module FourSlash {
             return result;
         }
 
-        private getCurrentLineNumberZeroBased() {
-            return this.getCurrentLineNumberOneBased() - 1;
-        }
-
-        private getCurrentLineNumberOneBased() {
-            return this.languageServiceShimHost.positionToZeroBasedLineCol(this.activeFile.fileName, this.currentCaretPosition).line + 1;
-        }
-
         private getLineColStringAtPosition(position: number) {
             var pos = this.languageServiceShimHost.positionToZeroBasedLineCol(this.activeFile.fileName, position);
             return 'line ' + (pos.line + 1) + ', col ' + pos.character;
@@ -2221,14 +2247,14 @@ module FourSlash {
             { unitName: fileName, content: content }],
             (fn, contents) => result = contents,
             ts.ScriptTarget.Latest,
-            sys.useCaseSensitiveFileNames);
-        var program = ts.createProgram([Harness.Compiler.fourslashFilename, fileName], { out: "fourslashTestOutput.js" }, host);
+            ts.sys.useCaseSensitiveFileNames);
+        // TODO (drosen): We need to enforce checking on these tests.
+        var program = ts.createProgram([Harness.Compiler.fourslashFilename, fileName], { out: "fourslashTestOutput.js", noResolve: true, target: ts.ScriptTarget.ES3 }, host);
         var checker = ts.createTypeChecker(program, /*fullTypeCheckMode*/ true);
-        checker.checkProgram();
 
-        var errs = checker.getDiagnostics(program.getSourceFile(fileName));
-        if (errs.length > 0) {
-            throw new Error('Error compiling ' + fileName + ': ' + errs.map(e => e.messageText).join('\r\n'));
+        var errors = program.getDiagnostics().concat(checker.getDiagnostics());
+        if (errors.length > 0) {
+            throw new Error('Error compiling ' + fileName + ': ' + errors.map(e => e.messageText).join('\r\n'));
         }
         checker.emitFiles();
         result = result || ''; // Might have an empty fourslash file
@@ -2264,7 +2290,7 @@ module FourSlash {
         // List of all the subfiles we've parsed out
         var files: FourSlashFile[] = [];
         // Global options
-        var opts: { [s: string]: string; } = {};
+        var globalOptions: { [s: string]: string; } = {};
         // Marker positions
 
         // Split up the input file by line
@@ -2272,7 +2298,7 @@ module FourSlash {
         // we have to string-based splitting instead and try to figure out the delimiting chars
         var lines = contents.split('\n');
 
-        var markerMap: MarkerMap = {};
+        var markerPositions: MarkerMap = {};
         var markers: Marker[] = [];
         var ranges: Range[] = [];
 
@@ -2313,7 +2339,7 @@ module FourSlash {
                         } else if (fileMetadataNamesIndex === fileMetadataNames.indexOf(testOptMetadataNames.filename)) {
                             // Found an @Filename directive, if this is not the first then create a new subfile
                             if (currentFileContent) {
-                                var file = parseFileContent(currentFileContent, currentFileName, markerMap, markers, ranges);
+                                var file = parseFileContent(currentFileContent, currentFileName, markerPositions, markers, ranges);
                                 file.fileOptions = currentFileOptions;
 
                                 // Store result file
@@ -2333,10 +2359,10 @@ module FourSlash {
                         }
                     } else {
                         // Check if the match is already existed in the global options
-                        if (opts[match[1]] !== undefined) {
+                        if (globalOptions[match[1]] !== undefined) {
                             throw new Error("Global Option : '" + match[1] + "' is already existed");
                         }
-                        opts[match[1]] = match[2];
+                        globalOptions[match[1]] = match[2];
                     }
                 }
             } else if (line == '' || lineLength === 0) {
@@ -2345,7 +2371,7 @@ module FourSlash {
             } else {
                 // Empty line or code line, terminate current subfile if there is one
                 if (currentFileContent) {
-                    var file = parseFileContent(currentFileContent, currentFileName, markerMap, markers, ranges);
+                    var file = parseFileContent(currentFileContent, currentFileName, markerPositions, markers, ranges);
                     file.fileOptions = currentFileOptions;
 
                     // Store result file
@@ -2360,11 +2386,11 @@ module FourSlash {
         }
 
         return {
-            markerPositions: markerMap,
-            markers: markers,
-            globalOptions: opts,
-            files: files,
-            ranges: ranges
+            markerPositions,
+            markers,
+            globalOptions,
+            files,
+            ranges
         };
     }
 
